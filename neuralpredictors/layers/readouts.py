@@ -944,7 +944,7 @@ class FullGaussian2d(nn.Module):
         self.register_buffer("grid_sharing_index", torch.from_numpy(sharing_idx))
         self._shared_grid = True
 
-    def forward(self, x, sample=None, shift=None, out_idx=None, multiplex=False, crop_edge_px=None, collapse=True):
+    def forward(self, x, sample=None, shift=None, out_idx=None, multiplex=False, crop_edge_px=None, collapse=True, **kwargs):
         """
         Propagates the input forwards through the readout
         Args:
@@ -970,7 +970,7 @@ class FullGaussian2d(nn.Module):
         N, c, w, h = x.size()
         c_in, w_in, h_in = self.in_shape
         if (c_in, w_in, h_in) != (c, w, h):
-            raise ValueError("the specified feature map dimension is not the readout's expected input dimension")
+            warnings.warn("the specified feature map dimension is not the readout's expected input dimension")
         feat = self.features.view(1, c, self.outdims)
         bias = self.bias
         outdims = self.outdims
@@ -999,7 +999,7 @@ class FullGaussian2d(nn.Module):
             y = F.grid_sample(x, grid, align_corners=self.align_corners)
             y = (y.squeeze(-1) * feat).sum(1).view(N, outdims)
         else:
-            y = torch.einsum("ncwh,nco->nwho", x, feat)
+            y = torch.einsum("ncwh,uco->nwho", x, feat)
 
         if self.bias is not None:
             y = y + bias
@@ -1009,6 +1009,9 @@ class FullGaussian2d(nn.Module):
                 y = y[:, crop_edge_px:-crop_edge_px, crop_edge_px:-crop_edge_px, :]
             if collapse:
                 y = y.reshape(N, -1)
+            if not collapse:
+                # reshape responses into (N, Outdims, h, w)
+                y = y.permute(0, 3, 1, 2)
 
         return y
 
