@@ -1171,6 +1171,7 @@ class SelfAttention2d(nn.Module):
             in_shape,
             outdims,
             bias,
+            position_encoding=True,
             **kwargs,
     ):
 
@@ -1181,6 +1182,7 @@ class SelfAttention2d(nn.Module):
         # store statistics about the images and neurons
         self.in_shape = in_shape
         self.outdims = outdims
+        self.use_position_embedding = position_encoding
 
         if bias:
             bias = Parameter(torch.Tensor(outdims))
@@ -1231,7 +1233,8 @@ class SelfAttention2d(nn.Module):
         )
         self.neuron_query.data.fill_(1 / self.in_shape[0])
 
-        self.position_embedding = PositionalEncoding2D(d_model=c, max_len=w,)
+        if self.use_position_embedding:
+            self.position_embedding = PositionalEncoding2D(d_model=c, max_len=w,)
 
         if self.bias is not None:
             self.bias.data.fill_(0)
@@ -1273,8 +1276,11 @@ class SelfAttention2d(nn.Module):
         feat = self.features.view(1, c, self.outdims)
         bias = self.bias
         x = x.flatten(2, 3)
-        x_embed = self.position_embedding(x)
-        y = torch.einsum("ics,ocn->isn", x_embed, self.neuron_query)
+        if self.use_position_embedding:
+            x_embed = self.position_embedding(x)
+            y = torch.einsum("ics,ocn->isn", x_embed, self.neuron_query)
+        else:
+            y = torch.einsum("ics,ocn->isn", x, self.neuron_query)
         attention_weights = torch.nn.functional.softmax(y, dim=1)
         y = torch.einsum("ics,isn->icn", x, attention_weights)
         y = torch.einsum("icn,ocn->in", y, feat)
