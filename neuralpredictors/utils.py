@@ -171,24 +171,27 @@ def no_transforms(dat):
 
 class PositionalEncoding2D(nn.Module):
 
-    def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding2D, self).__init__()
+    def __init__(self, d_model, dropout=0.1, max_len=5000, learned=False):
+        super().__init__()
         self.dropout = nn.Dropout(p=dropout)
 
-        d_model = d_model //2
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        twod_pe = torch.zeros(max_len, max_len, d_model*2)
-        for xpos in range(max_len):
-            for ypos in range(max_len):
-                twod_pe[xpos, ypos, :] = torch.cat([pe[0, xpos], pe[0, ypos]], dim=-1)
+        if learned:
+            self.twod_pe = nn.Parameter(torch.randn(d_model, (max_len * max_len)))
+        else:
+            d_model = d_model //2
+            pe = torch.zeros(max_len, d_model)
+            position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            pe = pe.unsqueeze(0)
+            twod_pe = torch.zeros(max_len, max_len, d_model*2)
+            for xpos in range(max_len):
+                for ypos in range(max_len):
+                    twod_pe[xpos, ypos, :] = torch.cat([pe[0, xpos], pe[0, ypos]], dim=-1)
 
-        twod_pe = twod_pe.flatten(0,1).T
-        self.register_buffer('twod_pe', twod_pe)
+            twod_pe = twod_pe.flatten(0,1).T
+            self.register_buffer('twod_pe', twod_pe)
 
     def forward(self, x):
         x = x + self.twod_pe[:, :x.size(-1)].unsqueeze(0)
