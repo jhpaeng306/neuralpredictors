@@ -596,7 +596,7 @@ class PointPyramid2d(nn.Module):
         else:
             return self.features.abs().sum()
 
-    def forward(self, x, shift=None):
+    def forward(self, x, shift=None, **kwargs,):
         if self.positive:
             positive(self.features)
         self.grid.data = torch.clamp(self.grid.data, -1, 1)
