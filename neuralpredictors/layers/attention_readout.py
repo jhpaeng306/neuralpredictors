@@ -125,7 +125,7 @@ class Attention2d(nn.Module):
         """
         Initializes the mean, and sigma of the Gaussian readout along with the features weights
         """
-        c, w, h = self.in_shape
+        c, h, w = self.in_shape
         self._features = Parameter(torch.Tensor(1, c, self.outdims))
         self._features.data.fill_(1 / self.in_shape[0])
 
@@ -133,7 +133,7 @@ class Attention2d(nn.Module):
         self.neuron_query.data.fill_(1 / self.in_shape[0])
         if self.use_pos_enc:
             self.position_embedding = PositionalEncoding2D(
-                d_model=c, max_len=w, learned=learned_pos, dropout=dropout_pos
+                d_model=c, width=w, height=h, learned=learned_pos, dropout=dropout_pos
             )
 
         if self.bias is not None:
