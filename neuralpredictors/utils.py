@@ -171,9 +171,10 @@ def no_transforms(dat):
 
 class PositionalEncoding2D(nn.Module):
 
-    def __init__(self, d_model, dropout=0.1, max_len=5000, learned=False, width=None, height=None):
+    def __init__(self, d_model, dropout=0.1, max_len=5000, learned=False, width=None, height=None, stack_channels=False,):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
+        self.stack_channels = stack_channels
 
         if width is None:
             width = height = max_len
@@ -197,5 +198,8 @@ class PositionalEncoding2D(nn.Module):
             self.register_buffer('twod_pe', twod_pe)
 
     def forward(self, x):
-        x = x + self.twod_pe[:, :x.size(-1)].unsqueeze(0)
+        if not self.stack_channels:
+            x = x + self.twod_pe[:, :x.size(-1)].unsqueeze(0)
+        else:
+            x = torch.hstack([x,  self.twod_pe[:, :x.size(-1)].unsqueeze(0).repeat(x.size(0), 1, 1)])
         return self.dropout(x)
