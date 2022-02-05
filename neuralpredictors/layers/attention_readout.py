@@ -75,6 +75,8 @@ class Attention2d(nn.Module):
         use_pos_enc=True,
         learned_pos=False,
         dropout_pos=0.1,
+        stack_pos_encoding=False,
+        n_pos_channels=None,
         **kwargs,
     ):
 
@@ -86,14 +88,13 @@ class Attention2d(nn.Module):
         self.in_shape = in_shape
         self.outdims = outdims
         self.use_pos_enc = use_pos_enc
-
         if bias:
             bias = Parameter(torch.Tensor(outdims))
             self.register_parameter("bias", bias)
         else:
             self.register_parameter("bias", None)
 
-        self.initialize(learned_pos, dropout_pos)
+        self.initialize(learned_pos, dropout_pos, stack_pos_encoding, n_pos_channels)
 
     @property
     def features(self):
@@ -121,19 +122,29 @@ class Attention2d(nn.Module):
         else:
             return self.neuron_query.abs().sum()
 
-    def initialize(self, learned_pos, dropout_pos):
+    def initialize(self, learned_pos, dropout_pos, stack_pos_encoding, n_pos_channels,):
         """
         Initializes the mean, and sigma of the Gaussian readout along with the features weights
         """
         c, h, w = self.in_shape
+        self.n_pos_channels = n_pos_channels
+        self.stack_pos_encoding = stack_pos_encoding
+
+        if n_pos_channels and stack_pos_encoding:
+            c = c + n_pos_channels
+
         self._features = Parameter(torch.Tensor(1, c, self.outdims))
         self._features.data.fill_(1 / self.in_shape[0])
 
         self.neuron_query = Parameter(torch.Tensor(1, c, self.outdims))
         self.neuron_query.data.fill_(1 / self.in_shape[0])
+        self.stack_pos_encoding = stack_pos_encoding
+
+        d_model = n_pos_channels if n_pos_channels else c
         if self.use_pos_enc:
             self.position_embedding = PositionalEncoding2D(
-                d_model=c, width=w, height=h, learned=learned_pos, dropout=dropout_pos
+                d_model=d_model, width=w, height=h, learned=learned_pos, dropout=dropout_pos,
+                stack_channels=stack_pos_encoding,
             )
 
         if self.bias is not None:
@@ -210,18 +221,29 @@ class MultiHeadAttention2d(Attention2d):
         temperature=(False, 1.0),  # (learnable-per-neuron, value)
         dropout_pos=0.1,
         layer_norm=False,
+        stack_pos_encoding=False,
+        n_pos_channels=None,
         **kwargs,
     ):
 
         self.heads = heads
         self.key_embedding = key_embedding
         self.value_embedding = value_embedding
-        super().__init__(in_shape, outdims, bias, use_pos_enc, learned_pos, dropout_pos)
+        super().__init__(in_shape, outdims, bias, use_pos_enc, learned_pos, dropout_pos, stack_pos_encoding, n_pos_channels)
         c, w, h = in_shape
+        if n_pos_channels and stack_pos_encoding:
+            c_stacked = c + n_pos_channels
+        else:
+            c_stacked = c
         if self.key_embedding and self.value_embedding:
-            self.to_kv = nn.Linear(c, c * 2, bias=False)
+            self.to_kv = nn.Linear(c_stacked, c_stacked * 2, bias=False)
         elif self.key_embedding:
-            self.to_key = nn.Linear(c, c, bias=False)
+            self.to_key = nn.Linear(c_stacked, c_stacked, bias=False)
+            self._features = Parameter(torch.Tensor(1, c, self.outdims))
+            self._features.data.fill_(1 / self.in_shape[0])
+        else:
+            self._features = Parameter(torch.Tensor(1, c, self.outdims))
+            self._features.data.fill_(1 / self.in_shape[0])
         if scale:
             dim_head = c // self.heads
             self.scale = dim_head ** -0.5  # prevent softmax gradients from vanishing (for large dim_head)
@@ -248,6 +270,9 @@ class MultiHeadAttention2d(Attention2d):
         c_in, w_in, h_in = self.in_shape
         if (c_in, w_in, h_in) != (c, w, h):
             warnings.warn("the specified feature map dimension is not the readout's expected input dimension")
+
+        if self.n_pos_channels and self.stack_pos_encoding:
+            c_stacked = c + self.n_pos_channels
 
         x = x.flatten(2, 3)  # [Images, Channels, w*h]
         if self.use_pos_enc:
