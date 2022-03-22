@@ -452,7 +452,7 @@ class DirectoryAttributeHandler:
         else:
             data_path = item_path.with_suffix(".npy")
             if data_path.exists() and data_path.is_file():
-                val = np.load(data_path)
+                val = np.load(data_path, allow_pickle=True)
             else:
                 raise AttributeError("Attribute {} not found".format(item))
         return val
