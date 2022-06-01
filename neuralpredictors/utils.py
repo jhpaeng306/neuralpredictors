@@ -2,6 +2,7 @@ import os, sys
 import warnings
 from contextlib import contextmanager
 import numpy as np
+import math
 import h5py
 import torch
 from torch import nn as nn
@@ -166,3 +167,39 @@ def no_transforms(dat):
         yield dat
     finally:
         dat.transforms = transforms
+
+
+class PositionalEncoding2D(nn.Module):
+
+    def __init__(self, d_model, dropout=0.1, max_len=5000, learned=False, width=None, height=None, stack_channels=False,):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        self.stack_channels = stack_channels
+
+        if width is None:
+            width = height = max_len
+
+        if learned:
+            self.twod_pe = nn.Parameter(torch.randn(d_model, (height * width)))
+        else:
+            d_model = d_model // 2
+            pe = torch.zeros(width, d_model)
+            position = torch.arange(0, width, dtype=torch.float).unsqueeze(1)
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+            pe[:, 0::2] = torch.sin(position * div_term)
+            pe[:, 1::2] = torch.cos(position * div_term)
+            pe = pe.unsqueeze(0)
+            twod_pe = torch.zeros(height, width, d_model*2)
+            for xpos in range(height):
+                for ypos in range(width):
+                    twod_pe[xpos, ypos, :] = torch.cat([pe[0, xpos], pe[0, ypos]], dim=-1)
+
+            twod_pe = twod_pe.flatten(0,1).T
+            self.register_buffer('twod_pe', twod_pe)
+
+    def forward(self, x):
+        if not self.stack_channels:
+            x = x + self.twod_pe[:, :x.size(-1)].unsqueeze(0)
+        else:
+            x = torch.hstack([x,  self.twod_pe[:, :x.size(-1)].unsqueeze(0).repeat(x.size(0), 1, 1)])
+        return self.dropout(x)

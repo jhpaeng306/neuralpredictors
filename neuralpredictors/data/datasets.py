@@ -452,7 +452,7 @@ class DirectoryAttributeHandler:
         else:
             data_path = item_path.with_suffix(".npy")
             if data_path.exists() and data_path.is_file():
-                val = np.load(data_path)
+                val = np.load(data_path, allow_pickle=True)
             else:
                 raise AttributeError("Attribute {} not found".format(item))
         return val
@@ -514,7 +514,7 @@ class FileTreeDatasetBase(TransformDataset):
     # specify list of transform types that are acceptable
     _transform_types = (DataTransform,)
 
-    def __init__(self, dirname, *data_keys, transforms=None, use_cache=True, output_rename=None, output_dict=False):
+    def __init__(self, dirname, *data_keys, transforms=None, use_cache=True, output_rename=None, output_dict=False, shuffle_behavior=False):
         """
         Dataset stored as a file tree. The tree needs to have the subdirs data, meta, meta/neurons, meta/statistics,
         and meta/trials. Please refer to convert_static_h5_dataset_to_folder in neuralpredictors.data.utils for an
@@ -645,6 +645,10 @@ class FileTreeDatasetBase(TransformDataset):
         # keep the number of files as the number of data points
         self._len = number_of_files[0]
 
+        self.shuffle_behavior = shuffle_behavior
+        if self.shuffle_behavior:
+            self.shuffled_idx = np.random.permutation(range(self._len))
+
         self._cache = {data_key: {} for data_key in data_keys}
 
     def resolve_data_path(self, data_key):
@@ -719,7 +723,10 @@ class FileTreeDatasetBase(TransformDataset):
                     val = self.trial_info[data_key][item : item + 1]
                 else:
                     datapath = self.resolve_data_path(data_key)
-                    val = np.load(datapath / "{}.npy".format(item))
+                    if self.shuffle_behavior and (data_key == "behavior"):
+                        val = np.load(datapath / "{}.npy".format(self.shuffled_idx[item]))
+                    else:
+                        val = np.load(datapath / "{}.npy".format(item))
                 if self.use_cache:
                     self._cache[data_key][item] = val
                 ret.append(val)
