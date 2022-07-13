@@ -252,7 +252,7 @@ class PointPooled2d(nn.Module):
         else:
             return self.features.abs().sum()
 
-    def forward(self, x, shift=None, out_idx=None):
+    def forward(self, x, shift=None, out_idx=None, **kwargs):
         """
         Propagates the input forwards through the readout
         Args:
