@@ -103,7 +103,7 @@ class SpatialXFeatureLinear(nn.Module):
         if self.bias is not None:
             self.bias.data.fill_(0)
 
-    def forward(self, x, shift=None):
+    def forward(self, x, shift=None, **kwargs,):
         if self.constrain_pos:
             positive(self.features)
 
@@ -252,7 +252,7 @@ class PointPooled2d(nn.Module):
         else:
             return self.features.abs().sum()
 
-    def forward(self, x, shift=None, out_idx=None):
+    def forward(self, x, shift=None, out_idx=None, **kwargs):
         """
         Propagates the input forwards through the readout
         Args:
