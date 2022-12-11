@@ -77,17 +77,17 @@ class Attention2d(nn.Module):
         dropout_pos=0.1,
         stack_pos_encoding=False,
         n_pos_channels=None,
+        temperature=1.0,
         **kwargs,
     ):
 
         super().__init__()
-
         # determines whether the Gaussian is isotropic or not
-
         # store statistics about the images and neurons
         self.in_shape = in_shape
         self.outdims = outdims
         self.use_pos_enc = use_pos_enc
+        self.T = temperature
         if bias:
             bias = Parameter(torch.Tensor(outdims))
             self.register_parameter("bias", bias)
@@ -122,7 +122,7 @@ class Attention2d(nn.Module):
         else:
             return self.neuron_query.abs().sum()
 
-    def initialize(self, learned_pos, dropout_pos, stack_pos_encoding, n_pos_channels,):
+    def initialize(self, learned_pos, dropout_pos, stack_pos_encoding, n_pos_channels):
         """
         Initializes the mean, and sigma of the Gaussian readout along with the features weights
         """
@@ -131,14 +131,16 @@ class Attention2d(nn.Module):
         self.stack_pos_encoding = stack_pos_encoding
 
         # only need when stacking
+        c_query = c
         if n_pos_channels and stack_pos_encoding:
-            c = c + n_pos_channels
+            c_query = c + n_pos_channels
 
         self._features = Parameter(torch.Tensor(1, c, self.outdims))
         self._features.data.fill_(1 / self.in_shape[0])
 
-        self.neuron_query = Parameter(torch.Tensor(1, c, self.outdims))
+        self.neuron_query = Parameter(torch.Tensor(1, c_query, self.outdims))
         self.neuron_query.data.fill_(1 / self.in_shape[0])
+
         self.stack_pos_encoding = stack_pos_encoding
 
         d_model = n_pos_channels if n_pos_channels else c
@@ -160,7 +162,11 @@ class Attention2d(nn.Module):
         via the `shared_features` (False). If it uses a copy, the feature_l1 regularizer for this copy will return 0
         """
 
-    def forward(self, x, output_attn_weights=False, **kwargs):
+    def forward(self,
+                x,
+                output_attn_weights=False,
+                argmax=False,
+                **kwargs):
         """
         Propagates the input forwards through the readout
         Args:
@@ -172,14 +178,22 @@ class Attention2d(nn.Module):
         c_in, w_in, h_in = self.in_shape
         if (c_in, w_in, h_in) != (c, w, h):
             warnings.warn("the specified feature map dimension is not the readout's expected input dimension")
+
+        c = self.features.shape[1]
+
         feat = self.features.view(1, c, self.outdims)
         bias = self.bias
         x = x.flatten(2, 3)
-        x_embed = self.position_embedding(x)  # -> [Images, Channels, w*h]
+        if self.use_pos_enc:
+            x_embed = self.position_embedding(x)  # -> [Images, Channels, w*h]
+        else:
+            x_embed = x
+
         # compare neuron query with each spatial position (dot-product)
         y = torch.einsum("ics,ocn->isn", x_embed, self.neuron_query)  # -> [Images, w*h, Neurons]
         # compute attention weights
-        attention_weights = torch.nn.functional.softmax(y, dim=1)  # -> [Images, w*h, Neurons]
+        attention_weights = torch.nn.functional.softmax(y / self.T, dim=1)  # -> [Images, w*h, Neurons]
+
         # compute average weighted with attention weights
         y = torch.einsum("ics,isn->icn", x, attention_weights)  # -> [Images, Channels, Neurons]
         y = torch.einsum("icn,ocn->in", y, feat)  # -> [Images, Neurons]
@@ -258,6 +272,36 @@ class MultiHeadAttention2d(Attention2d):
             self.norm = nn.LayerNorm((c, w * h))
         else:
             self.norm = None
+
+    def initialize(self, learned_pos, dropout_pos, stack_pos_encoding, n_pos_channels):
+        """
+        Initializes the mean, and sigma of the Gaussian readout along with the features weights
+        """
+        c, h, w = self.in_shape
+        self.n_pos_channels = n_pos_channels
+        self.stack_pos_encoding = stack_pos_encoding
+
+        # only need when stacking
+        if n_pos_channels and stack_pos_encoding:
+            c = c + n_pos_channels
+
+        self._features = Parameter(torch.Tensor(1, c, self.outdims))
+        self._features.data.fill_(1 / self.in_shape[0])
+
+        self.neuron_query = Parameter(torch.Tensor(1, c, self.outdims))
+        self.neuron_query.data.fill_(1 / self.in_shape[0])
+
+        self.stack_pos_encoding = stack_pos_encoding
+
+        d_model = n_pos_channels if n_pos_channels else c
+        if self.use_pos_enc:
+            self.position_embedding = PositionalEncoding2D(
+                d_model=d_model, width=w, height=h, learned=learned_pos, dropout=dropout_pos,
+                stack_channels=stack_pos_encoding,
+            )
+
+        if self.bias is not None:
+            self.bias.data.fill_(0)
 
     def forward(self, x, output_attn_weights=False, **kwargs):
         """
