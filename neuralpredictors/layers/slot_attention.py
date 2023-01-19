@@ -52,7 +52,8 @@ class SlotAttention(nn.Module):
         self.k_proj = nn.Linear(self.input_size, self.slot_size, bias=False)
         self.v_proj = nn.Linear(self.input_size, self.slot_size, bias=False)
 
-        self.gru = nn.GRUCell(self.slot_size, self.slot_size)
+        if self.use_slot_gru:
+            self.gru = nn.GRUCell(self.slot_size, self.slot_size)
         self.mlp = nn.Sequential(
             nn.Linear(self.slot_size, self.mlp_hidden_size),
             nn.ReLU(inplace=True),
