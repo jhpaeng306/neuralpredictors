@@ -73,7 +73,7 @@ class SlotAttention(nn.Module):
             )
         else:
             # for learned parameters
-            slots = self.slots_mu
+            slots = self.slots_mu.repeat(batch_size, 1, 1)
 
         for i in range(self.num_iterations):
             slots_prev = slots
