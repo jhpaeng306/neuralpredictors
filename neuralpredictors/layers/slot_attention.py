@@ -15,6 +15,7 @@ class SlotAttention(nn.Module):
         use_slot_gru=True,
         use_weighted_mean=True,
         full_skip=False,
+        slot_temperature=(False, 1.0)
     ):
         """Builds the Slot Attention module.
 
@@ -41,6 +42,9 @@ class SlotAttention(nn.Module):
         self.use_slot_gru = use_slot_gru
         self.use_weighted_mean = use_weighted_mean
         self.full_skip = full_skip
+        self.temperature = slot_temperature[0]
+        if slot_temperature[0]:
+            self.T = slot_temperature[1]
 
         # change from orignial:
         # self.slots_mu = nn.Parameter(torch.randn(1, 1, self.slot_size))
@@ -48,7 +52,7 @@ class SlotAttention(nn.Module):
         if self.draw_slots:
             self.slots_log_sigma = nn.Parameter(torch.randn(1, num_slots, self.slot_size))
 
-        self.q_proj = nn.Linear(self.input_size, self.slot_size, bias=False)
+        self.q_proj = nn.Linear(self.slot_size, self.slot_size, bias=False)
         self.k_proj = nn.Linear(self.input_size, self.slot_size, bias=False)
         self.v_proj = nn.Linear(self.input_size, self.slot_size, bias=False)
 
@@ -60,12 +64,10 @@ class SlotAttention(nn.Module):
             nn.Linear(self.mlp_hidden_size, self.slot_size),
         )
 
-    def forward(self, x, output_attn_weights=None):
+    def forward(self, x,):
         batch_size, _, _ = x.size()  # Shape: (batch_size x num_inputs x input_size)
-
         inputs = self.norm_inputs(x)
         keys, values = self.k_proj(inputs), self.v_proj(inputs)  # Shape: (batch_size x num_inputs x slot_size)
-
         # Initialize the slots. Shape: [batch_size, num_slots, slot_size].
         # Change to learned initial query embeddings -> representing one neuron type
         if self.draw_slots:
@@ -84,6 +86,9 @@ class SlotAttention(nn.Module):
 
             # Attention.
             attn = torch.einsum("bid,bjd->bij", keys, queries)  # Shape: [batch_size, num_inputs, num_slots].
+            # add softmax temperature
+            if self.temperature:
+                attn = attn / self.T
             attn = attn.softmax(dim=2) + self.epsilon
 
             # Weighted mean.
@@ -102,7 +107,4 @@ class SlotAttention(nn.Module):
             else:
                 slots = updates + self.mlp(self.norm_mlp(updates))
 
-        if output_attn_weights:
-            return slots, attn
-        else:
-            return slots
+        return slots, attn
