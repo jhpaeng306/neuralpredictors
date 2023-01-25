@@ -391,10 +391,9 @@ class SharedMultiHeadAttention2d(Attention2d):
                          n_pos_channels=n_pos_channels,
                          )
 
-
         c, w, h = in_shape
 
-        # overwrite features or query if the embeddings are down projecting the input
+        # overwrite features or query if the embeddings are-down projecting the input
         if value_embedding and embed_out_dim:
             self._features = Parameter(torch.Tensor(1, embed_out_dim, self.outdims))
             self._features.data.fill_(1 / self.in_shape[0])
@@ -404,7 +403,6 @@ class SharedMultiHeadAttention2d(Attention2d):
         if (key_embedding and not value_embedding) or (not key_embedding):
             self._features = Parameter(torch.Tensor(1, c, self.outdims))
             self._features.data.fill_(1 / self.in_shape[0])
-
 
         if scale:
             dim_head = c // self.heads
@@ -420,22 +418,30 @@ class SharedMultiHeadAttention2d(Attention2d):
         else:
             self.norm = None
 
-    def forward(self, key, value, output_attn_weights=False, **kwargs):
+    def forward(self, key, value, output_attn_weights=False, slot_attention_maps=None, **kwargs):
         """
         Propagates the input forwards through the readout
         Args:
             key, value: inputs, pre-computed from the parent class.
+            output_attn_weights: if True, returns the attention maps of all neurons
+            slot_attention_maps: when used with slot attention and when output_attn_weights is True,
+                the slot attention maps are input kwargs to the forward, and iwll also be returned.
         Returns:
             y: neuronal activity
         """
 
         query = rearrange(self.neuron_query, "o (h d) n -> o h d n", h=self.heads)
 
+        #TODO: Learn to read out from one slot, independent on image
+        # calculate attention map on a single slot
+
         # compare neuron query with each spatial position (dot-product)
         dot = torch.einsum("ihds,ohdn->ihsn", key, query)  # -> [Images, Heads, w*h, Neurons]
         dot = dot * self.scale / self.T
+
         # compute attention weights
         attention_weights = torch.nn.functional.softmax(dot, dim=2)  # -> [Images, Heads, w*h, Neurons]
+        print("neuron att maps: ", attention_weights.shape)
         # compute average weighted with attention weights
         y = torch.einsum("ihds,ihsn->ihdn", value, attention_weights)  # -> [Images, Heads, Head_Dim, Neurons]
         y = rearrange(y, "i h d n -> i (h d) n")  # -> [Images, Channels, Neurons]
@@ -446,6 +452,10 @@ class SharedMultiHeadAttention2d(Attention2d):
         if self.bias is not None:
             y = y + self.bias
 
+        # return neuronal responses, and attention maps if requested
         if output_attn_weights:
-            return y, attention_weights
+            if slot_attention_maps is not None:
+                return y, attention_weights, slot_attention_maps
+            else:
+                return y, attention_weights
         return y
