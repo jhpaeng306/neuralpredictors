@@ -170,7 +170,6 @@ def no_transforms(dat):
 
 
 class PositionalEncoding2D(nn.Module):
-
     def __init__(self, d_model, dropout=0.1, max_len=5000, learned=False, width=None, height=None, stack_channels=False,):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
@@ -198,8 +197,17 @@ class PositionalEncoding2D(nn.Module):
             self.register_buffer('twod_pe', twod_pe)
 
     def forward(self, x):
-        if not self.stack_channels:
-            x = x + self.twod_pe[:, :x.size(-1)].unsqueeze(0)
+        if len(x.shape) == 3:
+            if not self.stack_channels:
+                x = x + self.twod_pe[:, :x.size(-1)].unsqueeze(0)
+            else:
+                x = torch.hstack([x,  self.twod_pe[:, :x.size(-1)].unsqueeze(0).repeat(x.size(0), 1, 1)])
+        elif len(x.shape) == 4:
+            if not self.stack_channels:
+                x = x + self.twod_pe[:, :x.size(-2)].unsqueeze(0).unsqueeze(-1)
+            else:
+                x = torch.hstack([x, self.twod_pe[:, :x.size(-2)].unsqueeze(0).unsqueeze(-1).repeat(x.size(0), 1, 1, x.size(-1))])
         else:
-            x = torch.hstack([x,  self.twod_pe[:, :x.size(-1)].unsqueeze(0).repeat(x.size(0), 1, 1)])
+            raise ValueError("Positional encoding only supports 3D and 4D tensors")
+
         return self.dropout(x)
