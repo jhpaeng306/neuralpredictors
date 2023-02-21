@@ -441,7 +441,6 @@ class SharedMultiHeadAttention2d(Attention2d):
 
         # compute attention weights
         attention_weights = torch.nn.functional.softmax(dot, dim=2)  # -> [Images, Heads, w*h, Neurons]
-        print("neuron att maps: ", attention_weights.shape)
         # compute average weighted with attention weights
         y = torch.einsum("ihds,ihsn->ihdn", value, attention_weights)  # -> [Images, Heads, Head_Dim, Neurons]
         y = rearrange(y, "i h d n -> i (h d) n")  # -> [Images, Channels, Neurons]
