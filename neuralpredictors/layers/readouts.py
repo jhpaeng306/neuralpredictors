@@ -945,7 +945,7 @@ class FullGaussian2d(nn.Module):
         self._shared_grid = True
 
     def forward(
-        self, x, sample=None, shift=None, out_idx=None, multiplex=False, crop_edge_px=None, collapse=True, **kwargs
+        self, x, sample=None, shift=None, out_idx=None, multiplex=False, crop_edge_px=None, collapse=True, multiplex_mean=False, **kwargs
     ):
         """
         Propagates the input forwards through the readout
@@ -970,6 +970,9 @@ class FullGaussian2d(nn.Module):
                             By default (collapse=True), the readout returns the output in the shape of
                             (batch, neurons x locations). When collapse=False, the returned shape will be:
                             (batch, neurons, height x width)
+            multiplex_mean (bool): Only relevant when setting multiplex to True and collapse to False.
+                            Multiplex_mean will average the response of the multiplexed unit over space.
+                            For example: if
 
 
         Returns:
@@ -1022,9 +1025,12 @@ class FullGaussian2d(nn.Module):
 
             if collapse:
                 y = y.reshape(N, -1)
+
             else:
                 # reshape responses into (N, Outdims, h, w)
                 y = y.permute(0, 3, 1, 2)
+                if multiplex_mean:
+                    y = y.mean((2,3))
 
         return y
 
