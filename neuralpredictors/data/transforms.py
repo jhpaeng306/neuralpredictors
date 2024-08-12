@@ -1,6 +1,7 @@
 import numpy as np
 import torch
-from collections import namedtuple, Iterable
+from collections import OrderedDict
+from collections.abc import Iterable
 from skimage.transform import rescale
 
 
