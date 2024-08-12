@@ -1,5 +1,5 @@
 import warnings
-from collections import OrderedDict, Iterable
+from collections import OrderedDict
 
 from torch import nn
 import torch
