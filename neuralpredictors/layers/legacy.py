@@ -7,6 +7,60 @@ from torch.nn import Parameter
 from torch.nn import functional as F
 
 
+def _bilinear_sample(x, grid, align_corners=True):
+    """
+    x: (N, C, H_in, W_in)
+    grid: (N, H_out, W_out, 2)  in normalized coords [-1,1]
+    returns: (N, C, H_out, W_out)
+    """
+    N, C, H_in, W_in = x.shape
+    N2, H_out, W_out, _ = grid.shape
+    assert N2 == N
+
+    # map normalized coords → pixel indices
+    # (grid[...,0]+1)/2 * (W_in-1)
+    if align_corners:
+        ix = (grid[...,0] + 1) * 0.5 * (W_in  - 1)
+        iy = (grid[...,1] + 1) * 0.5 * (H_in  - 1)
+    else:
+        ix = (grid[...,0] + 1) * 0.5 * W_in - 0.5
+        iy = (grid[...,1] + 1) * 0.5 * H_in - 0.5
+
+    # corner pixel indices
+    x0 = ix.floor().long().clamp(0, W_in-1)
+    x1 = (x0 + 1).clamp(0, W_in-1)
+    y0 = iy.floor().long().clamp(0, H_in-1)
+    y1 = (y0 + 1).clamp(0, H_in-1)
+
+    # flatten x to (N, C, H_in*W_in)
+    x_flat = x.view(N, C, H_in*W_in)
+    # map 2D → linear index
+    base0 = y0 * W_in + x0
+    base1 = y1 * W_in + x0
+    base2 = y0 * W_in + x1
+    base3 = y1 * W_in + x1
+
+    # gather values at the 4 corners
+    Ia = torch.gather(x_flat, 2, base0.view(N,1,-1).expand(-1,C,-1))
+    Ib = torch.gather(x_flat, 2, base1.view(N,1,-1).expand(-1,C,-1))
+    Ic = torch.gather(x_flat, 2, base2.view(N,1,-1).expand(-1,C,-1))
+    Id = torch.gather(x_flat, 2, base3.view(N,1,-1).expand(-1,C,-1))
+
+    # interpolation weights
+    wa = (x1.float() - ix) * (y1.float() - iy)
+    wb = (x1.float() - ix) * (iy - y0.float())
+    wc = (ix  - x0.float()) * (y1.float() - iy)
+    wd = (ix  - x0.float()) * (iy - y0.float())
+
+    # combine
+    out_flat = Ia * wa.view(N,1,-1) \
+             + Ib * wb.view(N,1,-1) \
+             + Ic * wc.view(N,1,-1) \
+             + Id * wd.view(N,1,-1)
+
+    return out_flat.view(N, C, H_out, W_out)
+
+
 class Gaussian2d(nn.Module):
     """
     Instantiates an object that can used to learn a point in the core feature space for each neuron,
@@ -183,7 +237,7 @@ class Gaussian2d(nn.Module):
         if shift is not None:
             grid = grid + shift[:, None, None, :]
 
-        y = F.grid_sample(x, grid, align_corners=self.align_corners)
+        y = _bilinear_sample(x, grid, align_corners=self.align_corners)
         y = (y.squeeze(-1) * feat).sum(1).view(N, outdims)
 
         if self.bias is not None:

@@ -11,6 +11,60 @@ from torch.nn import functional as F
 from ..constraints import positive
 from ..utils import PositionalEncoding2D
 
+def _bilinear_sample(x, grid, align_corners=True):
+    """
+    x: (N, C, H_in, W_in)
+    grid: (N, H_out, W_out, 2)  in normalized coords [-1,1]
+    returns: (N, C, H_out, W_out)
+    """
+    N, C, H_in, W_in = x.shape
+    N2, H_out, W_out, _ = grid.shape
+    assert N2 == N
+
+    # map normalized coords → pixel indices
+    # (grid[...,0]+1)/2 * (W_in-1)
+    if align_corners:
+        ix = (grid[...,0] + 1) * 0.5 * (W_in  - 1)
+        iy = (grid[...,1] + 1) * 0.5 * (H_in  - 1)
+    else:
+        ix = (grid[...,0] + 1) * 0.5 * W_in - 0.5
+        iy = (grid[...,1] + 1) * 0.5 * H_in - 0.5
+
+    # corner pixel indices
+    x0 = ix.floor().long().clamp(0, W_in-1)
+    x1 = (x0 + 1).clamp(0, W_in-1)
+    y0 = iy.floor().long().clamp(0, H_in-1)
+    y1 = (y0 + 1).clamp(0, H_in-1)
+
+    # flatten x to (N, C, H_in*W_in)
+    x_flat = x.view(N, C, H_in*W_in)
+    # map 2D → linear index
+    base0 = y0 * W_in + x0
+    base1 = y1 * W_in + x0
+    base2 = y0 * W_in + x1
+    base3 = y1 * W_in + x1
+
+    # gather values at the 4 corners
+    Ia = torch.gather(x_flat, 2, base0.view(N,1,-1).expand(-1,C,-1))
+    Ib = torch.gather(x_flat, 2, base1.view(N,1,-1).expand(-1,C,-1))
+    Ic = torch.gather(x_flat, 2, base2.view(N,1,-1).expand(-1,C,-1))
+    Id = torch.gather(x_flat, 2, base3.view(N,1,-1).expand(-1,C,-1))
+
+    # interpolation weights
+    wa = (x1.float() - ix) * (y1.float() - iy)
+    wb = (x1.float() - ix) * (iy - y0.float())
+    wc = (ix  - x0.float()) * (y1.float() - iy)
+    wd = (ix  - x0.float()) * (iy - y0.float())
+
+    # combine
+    out_flat = Ia * wa.view(N,1,-1) \
+             + Ib * wb.view(N,1,-1) \
+             + Ic * wc.view(N,1,-1) \
+             + Id * wd.view(N,1,-1)
+
+    return out_flat.view(N, C, H_out, W_out)
+
+
 class ConfigurationError(Exception):
     pass
 
@@ -291,13 +345,13 @@ class PointPooled2d(nn.Module):
             # shift grid based on shifter network's prediction
             grid = grid.expand(N, outdims, 1, 2) + shift[:, None, None, :]
 
-        pools = [F.grid_sample(x, grid, align_corners=self.align_corners)]
+        pools = [_bilinear_sample(x, grid, align_corners=self.align_corners)]
         for _ in range(self.pool_steps):
             _, _, w_pool, h_pool = x.size()
             if w_pool * h_pool == 1:
                 warnings.warn("redundant pooling steps: pooled feature map size is already 1X1, consider reducing it")
             x = self.avg(x)
-            pools.append(F.grid_sample(x, grid, align_corners=self.align_corners))
+            pools.append(_bilinear_sample(x, grid, align_corners=self.align_corners))
         y = torch.cat(pools, dim=1)
         y = (y.squeeze(-1) * feat).sum(1).view(N, outdims)
 
@@ -438,10 +492,10 @@ class SpatialTransformerPooled3d(nn.Module):
             grid = torch.stack([grid + shift[:, i, :][:, None, None, :] for i in range(t)], 1)
             grid = grid.contiguous().view(-1, outdims, 1, 2)
         z = x.contiguous().transpose(2, 1).contiguous().view(-1, c, w, h)
-        pools = [F.grid_sample(z, grid, align_corners=self.align_corners)]
+        pools = [_bilinear_sample(z, grid, align_corners=self.align_corners)]
         for i in range(self._pool_steps):
             z = self.avg(z)
-            pools.append(F.grid_sample(z, grid, align_corners=self.align_corners))
+            pools.append(_bilinear_sample(z, grid, align_corners=self.align_corners))
         y = torch.cat(pools, dim=1)
         y = (y.squeeze(-1) * feat).sum(1).view(N, t, outdims)
 
@@ -609,7 +663,7 @@ class PointPyramid2d(nn.Module):
         else:
             grid = self.grid.expand(N, self.outdims, 1, 2) + shift[:, None, None, :]
 
-        pools = [F.grid_sample(xx, grid, align_corners=self.align_corners) for xx in self.gauss_pyramid(x)]
+        pools = [_bilinear_sample(xx, grid, align_corners=self.align_corners) for xx in self.gauss_pyramid(x)]
         y = torch.cat(pools, dim=1).squeeze(-1)
         y = (y * feat).sum(1).view(N, self.outdims)
 
@@ -1013,7 +1067,7 @@ class FullGaussian2d(nn.Module):
             # -> batchsize, width, height, neurons
             y = torch.einsum("ncwh,uco->nwho", x, feat)
         else:
-            y = F.grid_sample(x, grid, align_corners=self.align_corners)
+            y = _bilinear_sample(x, grid, align_corners=self.align_corners)
             y = (y.squeeze(-1) * feat).sum(1).view(N, outdims)
 
         if self.bias is not None:
@@ -1126,12 +1180,12 @@ class RemappedGaussian2d(FullGaussian2d):
                 bias = bias[out_idx]
             outdims = len(out_idx)
 
-        offsets = F.grid_sample(offset_field, grid, align_corners=self.align_corners)
+        offsets = _bilinear_sample(offset_field, grid, align_corners=self.align_corners)
         grid = grid + offsets.permute(0, 2, 3, 1)
         if shift is not None:
             grid = grid + shift[:, None, None, :]
 
-        y = F.grid_sample(x, grid, align_corners=self.align_corners)
+        y = _bilinear_sample(x, grid, align_corners=self.align_corners)
         y = (y.squeeze(-1) * feat).sum(1).view(N, outdims)
 
 
@@ -1663,7 +1717,7 @@ class Gaussian3d(nn.Module):
         if shift is not None:
             grid = grid + shift[:, None, None, :]
 
-        y = F.grid_sample(x, grid, align_corners=self.align_corners)
+        y = _bilinear_sample(x, grid, align_corners=self.align_corners)
         y = (y.squeeze(-1) * feat).sum(1).view(N, outdims)
 
         if self.bias is not None:
@@ -1895,7 +1949,7 @@ class UltraSparse(nn.Module):
         if shift is not None:  # it might not be valid now but have kept it for future devop.
             grid = grid + shift[:, None, None, :]
 
-        y = F.grid_sample(x, grid, align_corners=self.align_corners).squeeze(-1)
+        y = _bilinear_sample(x, grid, align_corners=self.align_corners).squeeze(-1)
         z = y.view((N, 1, self.num_filters, outdims)).permute(0, 1, 3, 2)  # reorder the dims
         z = torch.einsum(
             "nkpf,mkpf->np", z, feat
