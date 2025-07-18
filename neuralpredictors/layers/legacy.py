@@ -60,14 +60,6 @@ def _bilinear_sample(x, grid, align_corners=True):
 
     return out_flat.view(N, C, H_out, W_out)
 
-# ─── Add this right below ─────────────────────────────────────────────────────
-# If you’re on PyTorch ≥2.0, compile the sampler once at import time.
-# Fallback to the uncompiled version if torch.compile isn’t available.
-try:
-    _fast_bilinear_sample = torch.compile(_bilinear_sample, backend="inductor")
-except AttributeError:
-    _fast_bilinear_sample = _bilinear_sample
-
 
 class Gaussian2d(nn.Module):
     """
